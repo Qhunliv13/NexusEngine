@@ -1,0 +1,27 @@
+# 编译产物 / Build artifacts (只保留需要的)
+*.obj
+*.lib
+*.log
+*.dll
+*.lib
+*.so
+*.nxld
+*.nxp
+*.nxld
+*.nxpt
+*.log
+*.md
+*.nxin
+# SCons 构建文件 / SCons build files
+.sconsign.dblite
+
+# 其他可执行文件（只保留 nx_main.exe）
+test_*.exe
+*.exe
+
+# 忽略 NexusPlugins-main 目录（源代码在子目录中）
+NexusPlugins-main
+
+# 允许 docs 目录下的文档文件
+docs
+!plugins/README.md
