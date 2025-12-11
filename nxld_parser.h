@@ -23,9 +23,6 @@ typedef struct {
     int32_t plugin_load_failure_policy;     /**< 插件加载失败策略：0=继续加载其他插件，1=遇到失败立即停止 / Plugin load failure policy: 0=continue loading others, 1=stop on failure / Plugin-Ladefehler-Richtlinie: 0=weitere laden, 1=bei Fehler stoppen */
     char** enabled_root_plugins;            /**< 启用的根插件路径列表 / Enabled root plugin paths / Aktivierte Stamm-Plugin-Pfade */
     size_t enabled_root_plugins_count;      /**< 插件路径数量 / Number of plugin paths / Anzahl der Plugin-Pfade */
-    char** virtual_parent_keys;            /**< 子插件路径列表 / Child plugin paths / Untergeordnete Plugin-Pfade */
-    char** virtual_parent_values;          /**< 父插件路径列表 / Parent plugin paths / Übergeordnete Plugin-Pfade */
-    size_t virtual_parent_count;            /**< 虚拟父级映射数量 / Number of virtual parent mappings / Anzahl der virtuellen Elternzuordnungen */
 } nxld_config_t;
 
 /**
@@ -41,7 +38,6 @@ typedef enum {
     NXLD_PARSE_EMPTY_PLUGINS,              /**< EnabledRootPlugins为空 / EnabledRootPlugins is empty / EnabledRootPlugins ist leer */
     NXLD_PARSE_PLUGIN_NOT_FOUND,           /**< 插件文件未找到 / Plugin file not found / Plugin-Datei nicht gefunden */
     NXLD_PARSE_PLUGIN_INVALID_FORMAT,      /**< 插件文件格式不符合运行系统要求 / Plugin file format does not match running system / Plugin-Dateiformat entspricht nicht dem laufenden System */
-    NXLD_PARSE_VIRTUAL_PARENT_INVALID,     /**< 虚拟父级配置中的插件路径不在EnabledRootPlugins中 / Plugin path in virtual parent config is not in EnabledRootPlugins / Plugin-Pfad in virtueller Elternkonfiguration ist nicht in EnabledRootPlugins */
     NXLD_PARSE_MEMORY_ERROR                /**< 内存分配错误 / Memory allocation error / Speicherzuweisungsfehler */
 } nxld_parse_result_t;
 

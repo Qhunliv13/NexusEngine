@@ -31,10 +31,78 @@
 #define MAX_PATH_LENGTH 4096
 
 /**
+ * @brief 验证UTF-8字节序列的有效性 / Validate UTF-8 byte sequence validity / Gültigkeit der UTF-8-Bytefolge validieren
+ * @param buffer 字节缓冲区 / Byte buffer / Byte-Puffer
+ * @param size 缓冲区大小 / Buffer size / Puffergröße
+ * @param pos 当前位置指针 / Current position pointer / Zeiger auf aktuelle Position
+ * @return 有效返回1，无效返回0 / Returns 1 if valid, 0 if invalid / Gibt 1 bei gültig zurück, 0 bei ungültig
+ * @details 检查UTF-8多字节字符的完整性 / Checks UTF-8 multi-byte character completeness / Prüft Vollständigkeit von UTF-8-Mehrbyte-Zeichen
+ */
+static int32_t validate_utf8_sequence(const uint8_t* buffer, size_t size, size_t* pos) {
+    if (*pos >= size) {
+        return 0;
+    }
+    
+    uint8_t first_byte = buffer[*pos];
+    
+    /* ASCII字符 (0xxxxxxx) / ASCII character / ASCII-Zeichen */
+    if ((first_byte & 0x80) == 0) {
+        (*pos)++;
+        return 1;
+    }
+    
+    /* 2字节字符 (110xxxxx 10xxxxxx) / 2-byte character / 2-Byte-Zeichen */
+    if ((first_byte & 0xE0) == 0xC0) {
+        if (*pos + 1 >= size || (buffer[*pos + 1] & 0xC0) != 0x80) {
+            return 0;
+        }
+        /* 检查是否过度编码 / Check for overlong encoding / Prüfen auf überlange Kodierung */
+        if ((first_byte & 0x1E) == 0) {
+            return 0;
+        }
+        *pos += 2;
+        return 1;
+    }
+    
+    /* 3字节字符 (1110xxxx 10xxxxxx 10xxxxxx) / 3-byte character / 3-Byte-Zeichen */
+    if ((first_byte & 0xF0) == 0xE0) {
+        if (*pos + 2 >= size || 
+            (buffer[*pos + 1] & 0xC0) != 0x80 || 
+            (buffer[*pos + 2] & 0xC0) != 0x80) {
+            return 0;
+        }
+        /* 检查是否过度编码 / Check for overlong encoding / Prüfen auf überlange Kodierung */
+        if ((first_byte & 0x0F) == 0 && (buffer[*pos + 1] & 0x20) == 0) {
+            return 0;
+        }
+        *pos += 3;
+        return 1;
+    }
+    
+    /* 4字节字符 (11110xxx 10xxxxxx 10xxxxxx 10xxxxxx) / 4-byte character / 4-Byte-Zeichen */
+    if ((first_byte & 0xF8) == 0xF0) {
+        if (*pos + 3 >= size || 
+            (buffer[*pos + 1] & 0xC0) != 0x80 || 
+            (buffer[*pos + 2] & 0xC0) != 0x80 || 
+            (buffer[*pos + 3] & 0xC0) != 0x80) {
+            return 0;
+        }
+        /* 检查是否过度编码 / Check for overlong encoding / Prüfen auf überlange Kodierung */
+        if ((first_byte & 0x07) == 0 && (buffer[*pos + 1] & 0x30) == 0) {
+            return 0;
+        }
+        *pos += 4;
+        return 1;
+    }
+    
+    return 0;
+}
+
+/**
  * @brief 检查文件是否为有效的UTF-8编码 / Check if file is valid UTF-8 encoding / Prüfen, ob Datei gültige UTF-8-Kodierung ist
  * @param file_path 文件路径 / File path / Dateipfad
  * @return 有效UTF-8返回1，无效返回0 / Returns 1 if valid UTF-8, 0 if invalid / Gibt 1 bei gültigem UTF-8 zurück, 0 bei ungültig
- * @details 检查文件前几个字节是否符合UTF-8编码规范 / Checks if first bytes of file conform to UTF-8 encoding specification / Prüft, ob erste Bytes der Datei UTF-8-Kodierungsspezifikation entsprechen
+ * @details 检查整个文件是否符合UTF-8编码规范 / Checks if entire file conforms to UTF-8 encoding specification / Prüft, ob gesamte Datei UTF-8-Kodierungsspezifikation entspricht
  */
 static int32_t is_valid_utf8_file(const char* file_path) {
     FILE* file = fopen(file_path, "rb");
@@ -42,54 +110,86 @@ static int32_t is_valid_utf8_file(const char* file_path) {
         return 0;
     }
     
-    uint8_t buffer[4];
-    size_t read = fread(buffer, 1, 4, file);
-    /**
-     * 检查fread操作是否成功 / Check if fread operation succeeded / Prüfen, ob fread-Operation erfolgreich war
-     * 如果读取失败且发生错误，返回失败 / If read fails and error occurs, return failure / Wenn Lesen fehlschlägt und Fehler auftritt, Fehler zurückgeben
-     */
-    if (read == 0 && ferror(file)) {
-        fclose(file);
-        return 0;
-    }
-    fclose(file);
-    
-    /**
-     * 空文件视为有效UTF-8编码 / Empty file is considered valid UTF-8 encoding / Leere Datei wird als gültige UTF-8-Kodierung betrachtet
-     * 允许空配置文件存在 / Allow empty configuration files / Leere Konfigurationsdateien zulassen
-     */
-    if (read == 0) {
-        return 1;
+    /* 读取BOM标记（如果存在） / Read BOM marker (if present) / BOM-Marker lesen (falls vorhanden) */
+    uint8_t bom[3];
+    size_t bom_read = fread(bom, 1, 3, file);
+    int32_t has_bom = 0;
+    if (bom_read >= 3 && bom[0] == 0xEF && bom[1] == 0xBB && bom[2] == 0xBF) {
+        has_bom = 1;
+    } else {
+        /* 如果没有BOM，重置文件指针到开头 / If no BOM, reset file pointer to beginning / Wenn kein BOM, Dateizeiger auf Anfang zurücksetzen */
+        rewind(file);
     }
     
-    if (read >= 3 && buffer[0] == 0xEF && buffer[1] == 0xBB && buffer[2] == 0xBF) {
-        return 1;
-    }
-    
+    /* 使用缓冲区逐块读取文件 / Read file in chunks using buffer / Datei blockweise mit Puffer lesen */
+    uint8_t buffer[4096];
     size_t pos = 0;
-    while (pos < read) {
-        if ((buffer[pos] & 0x80) == 0) {
-            pos++;
-        } else if ((buffer[pos] & 0xE0) == 0xC0) {
-            if (pos + 1 >= read || (buffer[pos + 1] & 0xC0) != 0x80) {
+    size_t pending_bytes = 0;
+    uint8_t pending_buffer[4] = {0};
+    
+    while (1) {
+        size_t read = fread(buffer + pending_bytes, 1, sizeof(buffer) - pending_bytes, file);
+        if (read == 0) {
+            if (ferror(file)) {
+                fclose(file);
                 return 0;
             }
-            pos += 2;
-        } else if ((buffer[pos] & 0xF0) == 0xE0) {
-            if (pos + 2 >= read || (buffer[pos + 1] & 0xC0) != 0x80 || (buffer[pos + 2] & 0xC0) != 0x80) {
+            break;
+        }
+        
+        size_t total_size = pending_bytes + read;
+        size_t check_pos = 0;
+        
+        /* 验证缓冲区中的UTF-8序列 / Validate UTF-8 sequences in buffer / UTF-8-Folgen im Puffer validieren */
+        while (check_pos < total_size) {
+            size_t old_pos = check_pos;
+            if (!validate_utf8_sequence(buffer, total_size, &check_pos)) {
+                fclose(file);
                 return 0;
             }
-            pos += 3;
-        } else if ((buffer[pos] & 0xF8) == 0xF0) {
-            if (pos + 3 >= read || (buffer[pos + 1] & 0xC0) != 0x80 || (buffer[pos + 2] & 0xC0) != 0x80 || (buffer[pos + 3] & 0xC0) != 0x80) {
+            /* 如果位置没有改变，避免无限循环 / If position didn't change, avoid infinite loop / Wenn Position sich nicht geändert hat, Endlosschleife vermeiden */
+            if (old_pos == check_pos) {
+                fclose(file);
                 return 0;
             }
-            pos += 4;
-        } else {
+        }
+        
+        /* 处理可能跨块的UTF-8字符 / Handle UTF-8 characters that may span chunks / UTF-8-Zeichen behandeln, die Blöcke überspannen können */
+        pending_bytes = 0;
+        if (total_size > 0) {
+            /* 检查最后几个字节是否可能是多字节字符的开始 / Check if last few bytes might be start of multi-byte character / Prüfen, ob letzte Bytes Start eines Mehrbyte-Zeichens sein könnten */
+            for (size_t i = total_size - 1; i > 0 && i >= total_size - 3; i--) {
+                if ((buffer[i] & 0xC0) == 0x80) {
+                    /* 这是连续字节，可能是多字节字符的一部分 / This is continuation byte, might be part of multi-byte character / Dies ist Fortsetzungsbyte, könnte Teil eines Mehrbyte-Zeichens sein */
+                    pending_bytes++;
+                } else if ((buffer[i] & 0x80) != 0) {
+                    /* 这是多字节字符的开始字节 / This is start byte of multi-byte character / Dies ist Startbyte eines Mehrbyte-Zeichens */
+                    pending_bytes = total_size - i;
+                    break;
+                } else {
+                    /* ASCII字符，不需要保留 / ASCII character, no need to keep / ASCII-Zeichen, nicht behalten */
+                    break;
+                }
+            }
+            
+            if (pending_bytes > 0 && pending_bytes < total_size) {
+                /* 将可能不完整的字符移到缓冲区开头 / Move potentially incomplete character to buffer start / Möglicherweise unvollständiges Zeichen an Pufferanfang verschieben */
+                memmove(pending_buffer, buffer + total_size - pending_bytes, pending_bytes);
+                memmove(buffer, pending_buffer, pending_bytes);
+            }
+        }
+    }
+    
+    /* 检查是否有未完成的UTF-8字符 / Check for incomplete UTF-8 characters / Prüfen auf unvollständige UTF-8-Zeichen */
+    if (pending_bytes > 0) {
+        size_t check_pos = 0;
+        if (!validate_utf8_sequence(pending_buffer, pending_bytes, &check_pos) || check_pos != pending_bytes) {
+            fclose(file);
             return 0;
         }
     }
     
+    fclose(file);
     return 1;
 }
 
@@ -123,6 +223,9 @@ static char* trim_whitespace(char* str) {
 
 /**
  * @brief 释放split_string分配的结果数组 / Free result array allocated by split_string / Ergebnisarray von split_string freigeben
+ * @param result 结果数组指针 / Result array pointer / Ergebnisarray-Zeiger
+ * @param size 数组元素数量 / Number of array elements / Anzahl der Array-Elemente
+ * @details 释放数组中每个字符串指针以及数组本身的内存 / Frees memory for each string pointer in array and array itself / Gibt Speicher für jeden Zeichenfolgenzeiger im Array und das Array selbst frei
  */
 static void free_split_result(char** result, size_t size) {
     if (result != NULL) {
@@ -410,61 +513,91 @@ static int32_t plugin_file_exists(const char* plugin_path) {
 }
 
 /**
+ * @brief 验证基本配置项的有效性（在分配内存前） / Validate basic config items validity (before memory allocation) / Gültigkeit grundlegender Konfigurationselemente validieren (vor Speicherzuweisung)
+ * @param lock_mode 锁模式值 / Lock mode value / Sperrmoduswert
+ * @param max_root_plugins 最大根插件数 / Maximum root plugins / Maximale Stamm-Plugins
+ * @param enabled_count 启用的插件数量 / Number of enabled plugins / Anzahl aktivierter Plugins
+ * @param lock_mode_set 锁模式是否已设置标志 / Flag indicating if lock mode is set / Flagge, die angibt, ob Sperrmodus gesetzt ist
+ * @param max_plugins_set 最大插件数是否已设置标志 / Flag indicating if max plugins is set / Flagge, die angibt, ob maximale Plugin-Anzahl gesetzt ist
+ * @return 解析结果 / Parse result / Parse-Ergebnis
+ * @details 检查锁模式、插件数量等基本配置项，在分配内存前进行验证。如果相关字段未设置，则跳过相关验证 / Checks basic config items like lock mode and plugin count, validates before memory allocation. Skips related validation if fields are not set / Prüft grundlegende Konfigurationselemente wie Sperrmodus und Plugin-Anzahl, validiert vor Speicherzuweisung. Überspringt verwandte Validierung, wenn Felder nicht gesetzt sind
+ */
+static nxld_parse_result_t validate_basic_config(int32_t lock_mode, int32_t max_root_plugins, size_t enabled_count, int32_t lock_mode_set, int32_t max_plugins_set) {
+    /* 检查插件列表是否为空 / Check if plugin list is empty / Prüfen, ob Plugin-Liste leer ist */
+    if (enabled_count == 0) {
+        return NXLD_PARSE_EMPTY_PLUGINS;
+    }
+    
+    /* 如果锁模式已设置，验证其有效性 / If lock mode is set, validate its validity / Wenn Sperrmodus gesetzt ist, Gültigkeit validieren */
+    if (lock_mode_set) {
+        if (lock_mode != 0 && lock_mode != 1) {
+            return NXLD_PARSE_INVALID_LOCK_MODE;
+        }
+        
+        /* 如果锁模式开启，验证最大插件数和插件数量关系 / If lock mode is on, validate relationship between max plugins and plugin count / Wenn Sperrmodus aktiviert ist, Beziehung zwischen maximalen Plugins und Plugin-Anzahl validieren */
+        if (lock_mode == 1) {
+            if (max_plugins_set && max_root_plugins < 1) {
+                return NXLD_PARSE_INVALID_MAX_PLUGINS;
+            }
+            if (max_plugins_set && (int32_t)enabled_count > max_root_plugins) {
+                return NXLD_PARSE_INVALID_MAX_PLUGINS;
+            }
+        }
+    }
+    
+    /* 如果最大插件数已设置但锁模式未设置，检查其有效性 / If max plugins is set but lock mode is not set, check its validity / Wenn maximale Plugin-Anzahl gesetzt ist, aber Sperrmodus nicht, Gültigkeit prüfen */
+    if (max_plugins_set && !lock_mode_set && max_root_plugins < 1) {
+        return NXLD_PARSE_INVALID_MAX_PLUGINS;
+    }
+    
+    return NXLD_PARSE_SUCCESS;
+}
+
+/**
  * @brief 验证配置有效性 / Validate configuration validity / Konfigurationsgültigkeit validieren
  * @param config 配置结构体指针 / Config structure pointer / Konfigurationsstruktur-Zeiger
  * @param config_file_path 配置文件路径 / Config file path / Konfigurationsdateipfad
  * @return 解析结果 / Parse result / Parse-Ergebnis
- * @details 检查锁模式、插件数量、插件文件存在性和格式 / Checks lock mode, plugin count, plugin file existence and format / Prüft Sperrmodus, Plugin-Anzahl, Plugin-Datei-Existenz und -Format
+ * @details 检查插件文件存在性和格式，在解析完成后进行完整验证 / Checks plugin file existence and format, performs complete validation after parsing / Prüft Plugin-Datei-Existenz und -Format, führt vollständige Validierung nach Parsen durch
  */
 static int32_t is_plugin_in_enabled_list(const char* plugin_path, char** enabled_plugins, size_t enabled_count);
 
 static nxld_parse_result_t validate_config(const nxld_config_t* config, const char* config_file_path) {
-    if (config->lock_mode != 0 && config->lock_mode != 1) {
-        return NXLD_PARSE_INVALID_LOCK_MODE;
+    /* 基本配置验证（在解析完成后进行完整验证） / Basic config validation (complete validation after parsing) / Grundlegende Konfigurationsvalidierung (vollständige Validierung nach Parsen) */
+    nxld_parse_result_t basic_result = validate_basic_config(
+        config->lock_mode, 
+        config->max_root_plugins, 
+        config->enabled_root_plugins_count,
+        1,  /* lock_mode已设置 / lock_mode is set / lock_mode ist gesetzt */
+        1   /* max_plugins已设置 / max_plugins is set / max_plugins ist gesetzt */
+    );
+    if (basic_result != NXLD_PARSE_SUCCESS) {
+        return basic_result;
     }
     
-    if (config->lock_mode == 1 && config->max_root_plugins < 1) {
-        return NXLD_PARSE_INVALID_MAX_PLUGINS;
-    }
-    
-    if (config->enabled_root_plugins_count == 0) {
-        return NXLD_PARSE_EMPTY_PLUGINS;
-    }
-    
-    if (config->lock_mode == 1) {
-        if ((int32_t)config->enabled_root_plugins_count > config->max_root_plugins) {
-            return NXLD_PARSE_INVALID_MAX_PLUGINS;
-        }
-    }
-    
-    
+    /* 验证插件文件格式和存在性 / Validate plugin file format and existence / Plugin-Dateiformat und -Existenz validieren */
     char config_dir[MAX_PATH_LENGTH];
     if (!nxld_utils_get_config_dir(config_file_path, config_dir, sizeof(config_dir))) {
         return NXLD_PARSE_FILE_ERROR;
     }
     
-    for (size_t i = 0; i < config->enabled_root_plugins_count; i++) {
-        if (!is_valid_plugin_format(config->enabled_root_plugins[i])) {
-            return NXLD_PARSE_PLUGIN_INVALID_FORMAT;
-        }
-        
-        char full_path[MAX_PATH_LENGTH];
-        if (!nxld_utils_build_plugin_full_path(config_dir, config->enabled_root_plugins[i], full_path, sizeof(full_path))) {
-            return NXLD_PARSE_FILE_ERROR;
-        }
-        
-        if (!plugin_file_exists(full_path)) {
-            return NXLD_PARSE_PLUGIN_NOT_FOUND;
-        }
-    }
-    
-    for (size_t i = 0; i < config->virtual_parent_count; i++) {
-        if (!is_plugin_in_enabled_list(config->virtual_parent_keys[i], config->enabled_root_plugins, config->enabled_root_plugins_count)) {
-            return NXLD_PARSE_VIRTUAL_PARENT_INVALID;
-        }
-        
-        if (!is_plugin_in_enabled_list(config->virtual_parent_values[i], config->enabled_root_plugins, config->enabled_root_plugins_count)) {
-            return NXLD_PARSE_VIRTUAL_PARENT_INVALID;
+    if (config->enabled_root_plugins != NULL) {
+        for (size_t i = 0; i < config->enabled_root_plugins_count; i++) {
+            if (config->enabled_root_plugins[i] == NULL) {
+                return NXLD_PARSE_PLUGIN_INVALID_FORMAT;
+            }
+            if (!is_valid_plugin_format(config->enabled_root_plugins[i])) {
+                return NXLD_PARSE_PLUGIN_INVALID_FORMAT;
+            }
+            
+            char full_path[MAX_PATH_LENGTH];
+            if (!nxld_utils_build_plugin_full_path(config_dir, config->enabled_root_plugins[i], full_path, sizeof(full_path))) {
+                return NXLD_PARSE_FILE_ERROR;
+            }
+            
+            if (!plugin_file_exists(full_path)) {
+                return NXLD_PARSE_PLUGIN_NOT_FOUND;
+            }
         }
     }
     
@@ -534,22 +667,10 @@ nxld_parse_result_t nxld_parse_file(const char* file_path, nxld_config_t* config
     char line[MAX_LINE_LENGTH];
     char current_section[MAX_SECTION_NAME] = {0};
     int32_t engine_core_found = 0;
+    int32_t lock_mode_set = 0;      /* 锁模式是否已设置标志 / Flag indicating if lock mode is set / Flagge, die angibt, ob Sperrmodus gesetzt ist */
+    int32_t max_plugins_set = 0;    /* 最大插件数是否已设置标志 / Flag indicating if max plugins is set / Flagge, die angibt, ob maximale Plugin-Anzahl gesetzt ist */
     char key[MAX_KEY_LENGTH];
     char value[MAX_VALUE_LENGTH];
-    
-    size_t virtual_parent_capacity = 8;
-    config->virtual_parent_keys = (char**)malloc(virtual_parent_capacity * sizeof(char*));
-    config->virtual_parent_values = (char**)malloc(virtual_parent_capacity * sizeof(char*));
-    if (config->virtual_parent_keys == NULL || config->virtual_parent_values == NULL) {
-        fclose(file);
-        if (config->virtual_parent_keys != NULL) {
-            free(config->virtual_parent_keys);
-        }
-        if (config->virtual_parent_values != NULL) {
-            free(config->virtual_parent_values);
-        }
-        return NXLD_PARSE_MEMORY_ERROR;
-    }
     
     while (fgets(line, sizeof(line), file) != NULL) {
         /**
@@ -583,7 +704,6 @@ nxld_parse_result_t nxld_parse_file(const char* file_path, nxld_config_t* config
             if (parse_section_name(trimmed_line, current_section)) {
                 if (strcmp(current_section, "EngineCore") == 0) {
                     engine_core_found = 1;
-                } else if (strcmp(current_section, "RootPluginVirtualParent") == 0) {
                 } else {
                     current_section[0] = '\0';
                 }
@@ -605,6 +725,7 @@ nxld_parse_result_t nxld_parse_file(const char* file_path, nxld_config_t* config
                         return NXLD_PARSE_INVALID_LOCK_MODE;
                     }
                     config->lock_mode = lock_mode_val;
+                    lock_mode_set = 1;
                 } else if (strcmp(key, "MaxRootPlugins") == 0) {
                     int32_t max_plugins_val;
                     if (!safe_strtoi32(value, &max_plugins_val, 1, INT32_MAX)) {
@@ -613,7 +734,9 @@ nxld_parse_result_t nxld_parse_file(const char* file_path, nxld_config_t* config
                         return NXLD_PARSE_INVALID_MAX_PLUGINS;
                     }
                     config->max_root_plugins = max_plugins_val;
+                    max_plugins_set = 1;
                 } else if (strcmp(key, "EnabledRootPlugins") == 0) {
+                    /* 在分配内存前先验证基本配置项 / Validate basic config items before memory allocation / Grundlegende Konfigurationselemente vor Speicherzuweisung validieren */
                     size_t count = 0;
                     char** plugins = split_string(value, ',', &count);
                     if (plugins == NULL && count > 0) {
@@ -621,6 +744,29 @@ nxld_parse_result_t nxld_parse_file(const char* file_path, nxld_config_t* config
                         nxld_config_free(config);
                         return NXLD_PARSE_MEMORY_ERROR;
                     }
+                    
+                    /* 验证基本配置项，避免无效配置分配内存 / Validate basic config items to avoid allocating memory for invalid config / Grundlegende Konfigurationselemente validieren, um Speicherzuweisung für ungültige Konfiguration zu vermeiden */
+                    /* 如果相关字段已设置，立即验证；如果未设置，允许继续，最终验证会在解析完成后进行 / If related fields are set, validate immediately; if not set, allow to continue, final validation will be done after parsing / Wenn verwandte Felder gesetzt sind, sofort validieren; wenn nicht gesetzt, fortfahren erlauben, endgültige Validierung wird nach Parsen durchgeführt */
+                    nxld_parse_result_t basic_validation = validate_basic_config(
+                        config->lock_mode,
+                        config->max_root_plugins,
+                        count,
+                        lock_mode_set,
+                        max_plugins_set
+                    );
+                    if (basic_validation != NXLD_PARSE_SUCCESS) {
+                        /* 释放已分配的内存 / Free allocated memory / Zugewiesenen Speicher freigeben */
+                        if (plugins != NULL) {
+                            for (size_t i = 0; i < count; i++) {
+                                free(plugins[i]);
+                            }
+                            free(plugins);
+                        }
+                        fclose(file);
+                        nxld_config_free(config);
+                        return basic_validation;
+                    }
+                    
                     config->enabled_root_plugins = plugins;
                     config->enabled_root_plugins_count = count;
                 } else if (strcmp(key, "PluginLoadFailurePolicy") == 0) {
@@ -635,64 +781,6 @@ nxld_parse_result_t nxld_parse_file(const char* file_path, nxld_config_t* config
                         config->plugin_load_failure_policy = policy_val;
                     }
                 }
-            } else if (strcmp(current_section, "RootPluginVirtualParent") == 0) {
-                if (config->virtual_parent_count >= virtual_parent_capacity) {
-                    virtual_parent_capacity *= 2;
-                    /**
-                     * 使用临时指针保存realloc结果，避免内存泄漏 / Use temporary pointers to save realloc results, avoid memory leaks / Temporäre Zeiger verwenden, um realloc-Ergebnisse zu speichern, Speicherlecks vermeiden
-                     * 如果realloc失败，原指针仍然有效 / If realloc fails, original pointer remains valid / Wenn realloc fehlschlägt, bleibt ursprünglicher Zeiger gültig
-                     */
-                    char** new_keys = (char**)realloc(config->virtual_parent_keys, virtual_parent_capacity * sizeof(char*));
-                    char** new_values = (char**)realloc(config->virtual_parent_values, virtual_parent_capacity * sizeof(char*));
-                    if (new_keys == NULL || new_values == NULL) {
-                        /**
-                         * realloc部分失败时的回滚处理 / Rollback handling when realloc partially fails / Rollback-Behandlung, wenn realloc teilweise fehlschlägt
-                         * 如果其中一个成功而另一个失败，需要释放已分配的内存 / If one succeeds and the other fails, need to free allocated memory / Wenn einer erfolgreich ist und der andere fehlschlägt, muss zugewiesener Speicher freigegeben werden
-                         */
-                        if (new_keys != NULL) {
-                            /**
-                             * new_keys成功但new_values失败，释放new_keys / new_keys succeeded but new_values failed, free new_keys / new_keys erfolgreich, aber new_values fehlgeschlagen, new_keys freigeben
-                             */
-                            free(new_keys);
-                        }
-                        if (new_values != NULL) {
-                            /**
-                             * new_values成功但new_keys失败，释放new_values / new_values succeeded but new_keys failed, free new_values / new_values erfolgreich, aber new_keys fehlgeschlagen, new_values freigeben
-                             */
-                            free(new_values);
-                        }
-                        fclose(file);
-                        nxld_config_free(config);
-                        return NXLD_PARSE_MEMORY_ERROR;
-                    }
-                    /**
-                     * 两个realloc操作都成功，更新配置结构体指针 / Both realloc operations succeeded, update config structure pointers / Beide realloc-Operationen erfolgreich, Konfigurationsstruktur-Zeiger aktualisieren
-                     * 使用新分配的内存地址替换原有指针 / Replace original pointers with newly allocated memory addresses / Ursprüngliche Zeiger durch neu zugewiesene Speicheradressen ersetzen
-                     */
-                    config->virtual_parent_keys = new_keys;
-                    config->virtual_parent_values = new_values;
-                }
-                
-                size_t key_len = strlen(key) + 1;
-                size_t value_len = strlen(value) + 1;
-                config->virtual_parent_keys[config->virtual_parent_count] = (char*)malloc(key_len);
-                config->virtual_parent_values[config->virtual_parent_count] = (char*)malloc(value_len);
-                if (config->virtual_parent_keys[config->virtual_parent_count] == NULL || 
-                    config->virtual_parent_values[config->virtual_parent_count] == NULL) {
-                    fclose(file);
-                    if (config->virtual_parent_keys[config->virtual_parent_count] != NULL) {
-                        free(config->virtual_parent_keys[config->virtual_parent_count]);
-                    }
-                    if (config->virtual_parent_values[config->virtual_parent_count] != NULL) {
-                        free(config->virtual_parent_values[config->virtual_parent_count]);
-                    }
-                    nxld_config_free(config);
-                    return NXLD_PARSE_MEMORY_ERROR;
-                }
-                
-                memcpy(config->virtual_parent_keys[config->virtual_parent_count], key, key_len);
-                memcpy(config->virtual_parent_values[config->virtual_parent_count], value, value_len);
-                config->virtual_parent_count++;
             }
         }
     }
@@ -730,24 +818,7 @@ void nxld_config_free(nxld_config_t* config) {
         config->enabled_root_plugins = NULL;
     }
     
-    if (config->virtual_parent_keys != NULL) {
-        for (size_t i = 0; i < config->virtual_parent_count; i++) {
-            free(config->virtual_parent_keys[i]);
-        }
-        free(config->virtual_parent_keys);
-        config->virtual_parent_keys = NULL;
-    }
-    
-    if (config->virtual_parent_values != NULL) {
-        for (size_t i = 0; i < config->virtual_parent_count; i++) {
-            free(config->virtual_parent_values[i]);
-        }
-        free(config->virtual_parent_values);
-        config->virtual_parent_values = NULL;
-    }
-    
     config->enabled_root_plugins_count = 0;
-    config->virtual_parent_count = 0;
 }
 
 const char* nxld_get_error_message(nxld_parse_result_t result) {
@@ -776,8 +847,6 @@ const char* nxld_get_error_message(nxld_parse_result_t result) {
 #else
             return "Plugin file format is invalid for Linux system (expected .so)";
 #endif
-        case NXLD_PARSE_VIRTUAL_PARENT_INVALID:
-            return "Plugin path in virtual parent config is not in EnabledRootPlugins";
         case NXLD_PARSE_MEMORY_ERROR:
             return "Memory allocation error";
         default:
