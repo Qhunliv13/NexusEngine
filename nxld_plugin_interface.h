@@ -111,9 +111,21 @@ NXLD_PLUGIN_EXPORT int32_t NXLD_PLUGIN_CALL nxld_plugin_get_interface_param_coun
  * @return 成功返回0，失败返回非0 / Returns 0 on success, non-zero on failure / Gibt 0 bei Erfolg zurück, ungleich 0 bei Fehler
  */
 NXLD_PLUGIN_EXPORT int32_t NXLD_PLUGIN_CALL nxld_plugin_get_interface_param_info(size_t index, int32_t param_index,
-                                                              char* param_name, size_t name_size,
-                                                              nxld_param_type_t* param_type,
-                                                              char* type_name, size_t type_name_size);
+                                                             char* param_name, size_t name_size,
+                                                             nxld_param_type_t* param_type,
+                                                             char* type_name, size_t type_name_size);
+
+/**
+ * @brief 获取接口返回值类型信息 / Get interface return type information / Schnittstellenrückgabetyp-Informationen abrufen
+ * @param index 接口索引 / Interface index / Schnittstellenindex
+ * @param return_type 输出返回值类型指针 / Output return type pointer / Ausgabe-Rückgabetyp-Zeiger
+ * @param type_name 输出类型名称缓冲区（可选，用于自定义类型） / Output type name buffer (optional, for custom types) / Ausgabe-Typnamen-Puffer (optional, für benutzerdefinierte Typen)
+ * @param type_name_size 类型名称缓冲区大小 / Type name buffer size / Typnamenpuffergröße
+ * @return 成功返回0，失败返回非0 / Returns 0 on success, non-zero on failure / Gibt 0 bei Erfolg zurück, ungleich 0 bei Fehler
+ */
+NXLD_PLUGIN_EXPORT int32_t NXLD_PLUGIN_CALL nxld_plugin_get_interface_return_type(size_t index,
+                                                                 nxld_param_type_t* return_type,
+                                                                 char* type_name, size_t type_name_size);
 
 #ifdef __cplusplus
 }
