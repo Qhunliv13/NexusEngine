@@ -21,6 +21,7 @@ typedef struct {
     int32_t lock_mode;                      /**< 锁模式值：0表示关闭，1表示开启 / Lock mode value: 0 indicates off, 1 indicates on / Sperrmoduswert: 0 bedeutet aus, 1 bedeutet ein */
     int32_t max_root_plugins;               /**< 最大根插件数 / Maximum root plugins / Maximale Stamm-Plugins */
     int32_t plugin_load_failure_policy;     /**< 插件加载失败策略：0=继续加载其他插件，1=遇到失败立即停止 / Plugin load failure policy: 0=continue loading others, 1=stop on failure / Plugin-Ladefehler-Richtlinie: 0=weitere laden, 1=bei Fehler stoppen */
+    int32_t generate_nxp_files;             /**< 生成.nxp文件标志：0=不生成，1=生成 / Generate .nxp files flag: 0=no, 1=yes / .nxp-Dateien generieren Flagge: 0=nein, 1=ja */
     char** enabled_root_plugins;            /**< 启用的根插件路径列表 / Enabled root plugin paths / Aktivierte Stamm-Plugin-Pfade */
     size_t enabled_root_plugins_count;      /**< 插件路径数量 / Number of plugin paths / Anzahl der Plugin-Pfade */
 } nxld_config_t;

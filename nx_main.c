@@ -28,7 +28,12 @@ int main(int argc, char* argv[]) {
         nxld_config_free(&config);
         return 1;
     }
-    
+
+    /* 根据配置生成.nxp文件 / Generate .nxp files according to configuration / .nxp-Dateien gemäß Konfiguration generieren */
+    if (config.generate_nxp_files != 0) {
+        nxld_generate_all_nxp_files(&config, plugins, loaded_count);
+    }
+
     nxld_free_plugins(plugins, loaded_count);
     
     nxld_config_free(&config);

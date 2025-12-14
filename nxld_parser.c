@@ -780,6 +780,17 @@ nxld_parse_result_t nxld_parse_file(const char* file_path, nxld_config_t* config
                     } else {
                         config->plugin_load_failure_policy = policy_val;
                     }
+                } else if (strcmp(key, "GenerateNxpFiles") == 0) {
+                    int32_t generate_val;
+                    if (!safe_strtoi32(value, &generate_val, 0, 1)) {
+                        /**
+                         * 解析失败时使用默认值0 / Use default value 0 when parsing fails / Standardwert 0 verwenden, wenn Parsen fehlschlägt
+                         * 默认不生成.nxp文件 / Default to not generate .nxp files / Standardmäßig .nxp-Dateien nicht generieren
+                         */
+                        config->generate_nxp_files = 0;
+                    } else {
+                        config->generate_nxp_files = generate_val;
+                    }
                 }
             }
         }

@@ -10,16 +10,12 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "nxld_plugin_interface.h"
+#include "nxld_parser.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#ifdef _WIN32
-#define NXLD_PLUGIN_CALL __cdecl
-#else
-#define NXLD_PLUGIN_CALL
-#endif
 
 /**
  * @brief 参数信息结构体 / Parameter information structure / Parameterinformationsstruktur
@@ -119,6 +115,15 @@ const char* nxld_plugin_get_error_message(nxld_plugin_load_result_t result);
  * @return 成功返回0，失败返回非0 / Returns 0 on success, non-zero on failure / Gibt 0 bei Erfolg zurück, ungleich 0 bei Fehler
  */
 int32_t nxld_plugin_generate_metadata_file(const nxld_plugin_t* plugin, const char* output_path);
+
+/**
+ * @brief 递归查找并生成所有插件的元数据文件 / Recursively find and generate metadata files for all plugins / Rekursiv alle Plugins suchen und Metadaten-Dateien generieren
+ * @param config 配置文件结构体指针 / Config structure pointer / Konfigurationsstruktur-Zeiger
+ * @param plugins 已加载的插件数组 / Loaded plugins array / Geladene Plugin-Array
+ * @param plugin_count 已加载插件数量 / Loaded plugin count / Anzahl geladener Plugins
+ * @return 成功返回0，失败返回非0 / Returns 0 on success, non-zero on failure / Gibt 0 bei Erfolg zurück, ungleich 0 bei Fehler
+ */
+int32_t nxld_generate_all_nxp_files(const nxld_config_t* config, const nxld_plugin_t* plugins, size_t plugin_count);
 
 #ifdef __cplusplus
 }

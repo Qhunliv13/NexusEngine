@@ -4,11 +4,20 @@
  */
 
 #include "nxld_plugin.h"
+#include "nxld_parser.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #include <stdint.h>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <dirent.h>
+#include <sys/stat.h>
+#include <limits.h>
+#endif
 
 #ifdef _WIN32
 /**
@@ -70,6 +79,20 @@
 #define PRIzu "zu"
 #endif
 #endif
+
+/**
+ * @brief 获取文件扩展名 / Get file extension / Dateierweiterung abrufen
+ * @param filename 文件名 / Filename / Dateiname
+ * @return 文件扩展名（不包含点号），如果没有扩展名返回NULL / File extension (without dot), NULL if no extension / Dateierweiterung (ohne Punkt), NULL wenn keine Erweiterung
+ */
+static const char* get_file_extension(const char* filename);
+
+/**
+ * @brief 检查是否为插件文件扩展名 / Check if it's a plugin file extension / Prüfen, ob es eine Plugin-Dateierweiterung ist
+ * @param extension 文件扩展名 / File extension / Dateierweiterung
+ * @return 是插件扩展名返回1，否则返回0 / Returns 1 if plugin extension, 0 otherwise / Gibt 1 zurück wenn Plugin-Erweiterung, sonst 0
+ */
+static int32_t is_plugin_extension(const char* extension);
 
 #ifdef _WIN32
 #include <windows.h>
@@ -824,6 +847,288 @@ int32_t nxld_plugin_generate_metadata_file(const nxld_plugin_t* plugin, const ch
     }
     
     fclose(fp);
+    return 0;
+}
+
+/**
+ * @brief 递归查找目录中的插件文件 / Recursively find plugin files in directory / Rekursiv Plugin-Dateien in Verzeichnis suchen
+ * @param directory 搜索目录 / Search directory / Suchverzeichnis
+ * @param plugin_paths 输出插件路径数组 / Output plugin paths array / Ausgabe-Plugin-Pfad-Array
+ * @param plugin_count 输出插件数量 / Output plugin count / Ausgabe-Plugin-Anzahl
+ * @param max_plugins 最大插件数量限制 / Maximum plugin count limit / Maximale Plugin-Anzahl-Limit
+ * @return 成功返回0，失败返回-1 / Returns 0 on success, -1 on failure / Gibt 0 bei Erfolg zurück, -1 bei Fehler
+ */
+static int32_t find_plugins_recursive(const char* directory, char*** plugin_paths, size_t* plugin_count, size_t max_plugins) {
+    if (directory == NULL || plugin_paths == NULL || plugin_count == NULL) {
+        return -1;
+    }
+
+#ifdef _WIN32
+    /**
+     * Windows平台实现 / Windows platform implementation / Windows-Plattform-Implementierung
+     */
+    WIN32_FIND_DATA find_data;
+    HANDLE find_handle;
+
+    char search_pattern[MAX_PATH];
+    if (snprintf(search_pattern, sizeof(search_pattern), "%s\\*", directory) >= sizeof(search_pattern)) {
+        return -1;
+    }
+
+    find_handle = FindFirstFile(search_pattern, &find_data);
+    if (find_handle == INVALID_HANDLE_VALUE) {
+        return -1;
+    }
+
+    do {
+        if (strcmp(find_data.cFileName, ".") == 0 || strcmp(find_data.cFileName, "..") == 0) {
+            continue;
+        }
+
+        char full_path[MAX_PATH];
+        if (snprintf(full_path, sizeof(full_path), "%s\\%s", directory, find_data.cFileName) >= sizeof(full_path)) {
+            continue;
+        }
+
+        if (find_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            /* 递归查找子目录 / Recursively search subdirectories / Rekursiv Unterverzeichnisse suchen */
+            if (find_plugins_recursive(full_path, plugin_paths, plugin_count, max_plugins) != 0) {
+                continue;
+            }
+        } else {
+            /* 检查是否为插件文件 / Check if it's a plugin file / Prüfen, ob es eine Plugin-Datei ist */
+            const char* ext = get_file_extension(find_data.cFileName);
+            if (ext != NULL && is_plugin_extension(ext)) {
+                if (*plugin_count >= max_plugins) {
+                    FindClose(find_handle);
+                    return -1;
+                }
+
+                char* path_copy = malloc(strlen(full_path) + 1);
+                if (path_copy == NULL) {
+                    FindClose(find_handle);
+                    return -1;
+                }
+                strcpy_safe(path_copy, strlen(full_path) + 1, full_path);
+
+                *plugin_paths = realloc(*plugin_paths, (*plugin_count + 1) * sizeof(char*));
+                if (*plugin_paths == NULL) {
+                    free(path_copy);
+                    FindClose(find_handle);
+                    return -1;
+                }
+                (*plugin_paths)[*plugin_count] = path_copy;
+                (*plugin_count)++;
+            }
+        }
+    } while (FindNextFile(find_handle, &find_data));
+
+    FindClose(find_handle);
+    return 0;
+#else
+    /**
+     * Unix平台实现 / Unix platform implementation / Unix-Plattform-Implementierung
+     */
+    DIR* dir = opendir(directory);
+    if (dir == NULL) {
+        return -1;
+    }
+
+    struct dirent* entry;
+    while ((entry = readdir(dir)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+            continue;
+        }
+
+        char full_path[PATH_MAX];
+        if (snprintf(full_path, sizeof(full_path), "%s/%s", directory, entry->d_name) >= sizeof(full_path)) {
+            continue;
+        }
+
+        struct stat stat_buf;
+        if (stat(full_path, &stat_buf) != 0) {
+            continue;
+        }
+
+        if (S_ISDIR(stat_buf.st_mode)) {
+            /* 递归查找子目录 / Recursively search subdirectories / Rekursiv Unterverzeichnisse suchen */
+            if (find_plugins_recursive(full_path, plugin_paths, plugin_count, max_plugins) != 0) {
+                continue;
+            }
+        } else if (S_ISREG(stat_buf.st_mode)) {
+            /* 检查是否为插件文件 / Check if it's a plugin file / Prüfen, ob es eine Plugin-Datei ist */
+            const char* ext = get_file_extension(entry->d_name);
+            if (ext != NULL && is_plugin_extension(ext)) {
+                if (*plugin_count >= max_plugins) {
+                    closedir(dir);
+                    return -1;
+                }
+
+                char* path_copy = malloc(strlen(full_path) + 1);
+                if (path_copy == NULL) {
+                    closedir(dir);
+                    return -1;
+                }
+                strcpy_safe(path_copy, strlen(full_path) + 1, full_path);
+
+                *plugin_paths = realloc(*plugin_paths, (*plugin_count + 1) * sizeof(char*));
+                if (*plugin_paths == NULL) {
+                    free(path_copy);
+                    closedir(dir);
+                    return -1;
+                }
+                (*plugin_paths)[*plugin_count] = path_copy;
+                (*plugin_count)++;
+            }
+        }
+    }
+
+    closedir(dir);
+    return 0;
+#endif
+}
+
+/**
+ * @brief 获取文件扩展名 / Get file extension / Dateierweiterung abrufen
+ * @param filename 文件名 / Filename / Dateiname
+ * @return 文件扩展名（不包含点号），如果没有扩展名返回NULL / File extension (without dot), NULL if no extension / Dateierweiterung (ohne Punkt), NULL wenn keine Erweiterung
+ */
+static const char* get_file_extension(const char* filename) {
+    if (filename == NULL) {
+        return NULL;
+    }
+
+    const char* dot = strrchr(filename, '.');
+    if (dot == NULL || dot == filename) {
+        return NULL;
+    }
+
+    return dot + 1;
+}
+
+/**
+ * @brief 检查是否为插件文件扩展名 / Check if it's a plugin file extension / Prüfen, ob es eine Plugin-Dateierweiterung ist
+ * @param extension 文件扩展名 / File extension / Dateierweiterung
+ * @return 是插件扩展名返回1，否则返回0 / Returns 1 if plugin extension, 0 otherwise / Gibt 1 zurück wenn Plugin-Erweiterung, sonst 0
+ */
+static int32_t is_plugin_extension(const char* extension) {
+    if (extension == NULL) {
+        return 0;
+    }
+
+#ifdef _WIN32
+    return strcmp(extension, "dll") == 0;
+#elif defined(__APPLE__) || defined(__MACH__)
+    return strcmp(extension, "dylib") == 0;
+#else
+    return strcmp(extension, "so") == 0;
+#endif
+}
+
+/**
+ * @brief 递归查找并生成所有插件的元数据文件 / Recursively find and generate metadata files for all plugins / Rekursiv alle Plugins suchen und Metadaten-Dateien generieren
+ * @param config 配置文件结构体指针 / Config structure pointer / Konfigurationsstruktur-Zeiger
+ * @param plugins 已加载的插件数组 / Loaded plugins array / Geladene Plugin-Array
+ * @param plugin_count 已加载插件数量 / Loaded plugin count / Anzahl geladener Plugins
+ * @return 成功返回0，失败返回非0 / Returns 0 on success, non-zero on failure / Gibt 0 bei Erfolg zurück, ungleich 0 bei Fehler
+ */
+int32_t nxld_generate_all_nxp_files(const nxld_config_t* config, const nxld_plugin_t* plugins, size_t plugin_count) {
+    if (config == NULL || plugins == NULL) {
+        return -1;
+    }
+
+    /**
+     * 为已加载的插件生成.nxp文件 / Generate .nxp files for loaded plugins / .nxp-Dateien für geladene Plugins generieren
+     */
+    for (size_t i = 0; i < plugin_count; i++) {
+        const nxld_plugin_t* plugin = &plugins[i];
+        if (plugin->plugin_path == NULL) {
+            continue;
+        }
+
+        /* 构造.nxp文件路径 / Construct .nxp file path / .nxp-Dateipfad konstruieren */
+        char nxp_path[1024];
+        size_t path_len = strlen(plugin->plugin_path);
+        if (path_len >= sizeof(nxp_path) - 4) {  /* 预留.nxp扩展名空间 / Reserve space for .nxp extension / Platz für .nxp-Erweiterung reservieren */
+            continue;
+        }
+
+        strcpy_safe(nxp_path, sizeof(nxp_path), plugin->plugin_path);
+        char* ext_pos = strrchr(nxp_path, '.');
+        if (ext_pos != NULL) {
+            *ext_pos = '\0';  /* 移除原扩展名 / Remove original extension / Ursprüngliche Erweiterung entfernen */
+        }
+        strcat_safe(nxp_path, sizeof(nxp_path), ".nxp");
+
+        /* 生成.nxp文件 / Generate .nxp file / .nxp-Datei generieren */
+        if (nxld_plugin_generate_metadata_file(plugin, nxp_path) != 0) {
+            /* 生成失败时继续处理其他插件 / Continue processing other plugins when generation fails / Bei Generierungsfehler mit anderen Plugins fortfahren */
+            continue;
+        }
+    }
+
+    /**
+     * 递归查找未加载的插件并生成.nxp文件 / Recursively find unloaded plugins and generate .nxp files / Rekursiv nicht geladene Plugins suchen und .nxp-Dateien generieren
+     */
+    char** found_plugins = NULL;
+    size_t found_count = 0;
+    const size_t max_search_plugins = 1000;  /* 限制搜索的最大插件数量 / Limit maximum number of plugins to search / Maximale Anzahl zu suchender Plugins begrenzen */
+
+    /* 从当前目录开始递归查找 / Start recursive search from current directory / Rekursive Suche vom aktuellen Verzeichnis starten */
+    if (find_plugins_recursive(".", &found_plugins, &found_count, max_search_plugins) == 0) {
+        for (size_t i = 0; i < found_count; i++) {
+            const char* plugin_path = found_plugins[i];
+            if (plugin_path == NULL) {
+                continue;
+            }
+
+            /* 检查是否已经为该插件生成了.nxp文件 / Check if .nxp file has already been generated for this plugin / Prüfen, ob .nxp-Datei bereits für dieses Plugin generiert wurde */
+            int already_loaded = 0;
+            for (size_t j = 0; j < plugin_count; j++) {
+                if (plugins[j].plugin_path != NULL && strcmp(plugins[j].plugin_path, plugin_path) == 0) {
+                    already_loaded = 1;
+                    break;
+                }
+            }
+
+            if (already_loaded) {
+                free(found_plugins[i]);
+                continue;
+            }
+
+            /* 尝试加载插件以获取元数据 / Try to load plugin to get metadata / Plugin laden versuchen um Metadaten zu erhalten */
+            nxld_plugin_t temp_plugin;
+            nxld_plugin_load_result_t load_result = nxld_plugin_load(plugin_path, &temp_plugin);
+            if (load_result == NXLD_PLUGIN_LOAD_SUCCESS) {
+                /* 构造.nxp文件路径 / Construct .nxp file path / .nxp-Dateipfad konstruieren */
+                char nxp_path[1024];
+                size_t path_len = strlen(plugin_path);
+                if (path_len >= sizeof(nxp_path) - 4) {
+                    nxld_plugin_free(&temp_plugin);
+                    free(found_plugins[i]);
+                    continue;
+                }
+
+                strcpy_safe(nxp_path, sizeof(nxp_path), plugin_path);
+                char* ext_pos = strrchr(nxp_path, '.');
+                if (ext_pos != NULL) {
+                    *ext_pos = '\0';
+                }
+                strcat_safe(nxp_path, sizeof(nxp_path), ".nxp");
+
+                /* 生成.nxp文件 / Generate .nxp file / .nxp-Datei generieren */
+                nxld_plugin_generate_metadata_file(&temp_plugin, nxp_path);
+
+                /* 卸载临时加载的插件 / Unload temporarily loaded plugin / Temporär geladenes Plugin entladen */
+                nxld_plugin_free(&temp_plugin);
+            }
+
+            free(found_plugins[i]);
+        }
+
+        free(found_plugins);
+    }
+
     return 0;
 }
 
